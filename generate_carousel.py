@@ -9,7 +9,7 @@ Outputs: output/slide_1.jpg ... slide_N.jpg + caption.txt
 """
 import json, os, sys, io, re
 import urllib.request, urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -119,7 +119,8 @@ def make_fact_slide(fact, md_label, slide_no, total):
     d.rectangle([0,0,W,14], fill=RED)
 
     # Header
-    d.text((70, 60), f"ON THIS DAY · {md_label.upper()}", font=font(30, True), fill=GOLD)
+    header = "THIS WEEK" if fact.get("approx") else "ON THIS DAY"
+    d.text((70, 60), f"{header} · {md_label.upper()}", font=font(30, True), fill=GOLD)
     d.text((W-70, 60), f"{slide_no}/{total}", font=font(30, True), fill=GREY, anchor="ra")
 
     # Album art centered
@@ -159,7 +160,7 @@ def make_fact_slide(fact, md_label, slide_no, total):
     y += af.size + 40
 
     # Fact line
-    fact_txt = f"{fact['ago']} years ago today"
+    fact_txt = f"{fact['ago']} years ago " + ("this week" if fact.get("approx") else "today")
     hne = fact.get("hne")
     d.text((W//2, y), fact_txt, font=font(28), fill=GREY, anchor="mm")
     if hne and y < H-190:
@@ -187,6 +188,21 @@ def generate(md=None):
         keys = sorted(TF.keys())
         md = min(keys, key=lambda k: abs(int(k[:2])*31+int(k[3:]) - (int(md[:2])*31+int(md[3:]))))
         facts = TF[md]
+
+    # Pad thin dates from neighboring days: charts were weekly, so a #1
+    # from a day or two away was still #1 on this date. Mark those facts
+    # so slides say "this week" instead of "today".
+    if len(facts) < 5:
+        base_dt = datetime.strptime(f"2000-{md}", "%Y-%m-%d")  # leap year keeps 02-29 valid
+        used_years = {f["year"] for f in facts}
+        for off in (1, -1, 2, -2, 3, -3):
+            if len(facts) >= 5: break
+            key = (base_dt + timedelta(days=off)).strftime("%m-%d")
+            for f in TF.get(key, []):
+                if len(facts) >= 5: break
+                if f["year"] in used_years: continue
+                f = dict(f, approx=True)
+                facts.append(f); used_years.add(f["year"])
 
     facts = sorted(facts, key=lambda f: -f["year"])[:5]   # up to 5, recent first
     try:
@@ -222,7 +238,8 @@ def generate(md=None):
     lines = [f"🎵 GUESS WHAT WAS #1 IN ISRAEL — {md_label}? Swipe to find out! 👉\n"]
     for fact in facts:
         n1 = fact["n1"]
-        lines.append(f"🏆 {fact['year']}: \"{n1['t']}\" — {n1['a']} ({fact['ago']} years ago)")
+        when = f"{fact['ago']} years ago" + (" this week" if fact.get("approx") else "")
+        lines.append(f"🏆 {fact['year']}: \"{n1['t']}\" — {n1['a']} ({when})")
     lines.append(f"\n🔎 Explore the full archive: 1,548 weekly charts, 1961–1997 → {SITE}")
     lines.append("\n#IsraeliCharts #OnThisDay #MusicHistory #ChartHistory #Israel #מצעד #רשתגימל "
                  "#80smusic #90smusic #70smusic #retromusic #nostalgia #musicfacts #numberone #vinyl #popmusic")
