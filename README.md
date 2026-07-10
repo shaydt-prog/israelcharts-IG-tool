@@ -3,7 +3,7 @@
 Auto-generates and posts a daily **"On This Day in Israeli Chart History"** image to Instagram.
 
 ## How it works
-1. `generate_post.py` reads `today_facts.json` (extracted from the israelicharts.com database — 1,548 facts across 365 days), picks today's facts, renders a branded 1080×1350 card, and writes a caption with hashtags.
+1. `generate_post.py` reads `today_facts.json` (extracted from the israelcharts.com database — 1,548 facts across 365 days), picks today's facts, renders a branded 1080×1350 card, and writes a caption with hashtags.
 2. `post_to_instagram.py` publishes it via the official **Instagram Graph API**.
 3. GitHub Actions runs the whole thing **daily at ~07:00 Israel time**. Zero servers, zero cost.
 
