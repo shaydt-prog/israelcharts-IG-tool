@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 W, H = 1080, 1350
 NAVY, NAVY2 = (13, 20, 40), (23, 33, 60)
 RED, GOLD, WHITE, GREY, BLUE = (204,0,0), (255,184,0), (255,255,255), (150,160,180), (120,190,255)
-SITE, HANDLE = "israelcharts.com", "@israelicharts"
+SITE, HANDLE = "israelcharts.com", "@israelmusiccharts"
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 def font(size, bold=False):
