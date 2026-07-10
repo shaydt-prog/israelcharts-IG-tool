@@ -27,7 +27,7 @@ jobs:
       - name: Commit slides to repo
         run: |
           git config user.name "ig-bot"
-          git config user.email "bot@israelicharts.com"
+          git config user.email "bot@israelcharts.com"
           git add output/
           git commit -m "Daily carousel $(date +%F)" || echo "no changes"
           for i in 1 2 3; do

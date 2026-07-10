@@ -18,7 +18,7 @@ RED    = (204, 0, 0)
 GOLD   = (255, 184, 0)
 WHITE  = (255, 255, 255)
 GREY   = (150, 160, 180)
-SITE   = "israelicharts.com"
+SITE   = "israelcharts.com"
 HANDLE = "@israelicharts"            # change to your IG handle
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
