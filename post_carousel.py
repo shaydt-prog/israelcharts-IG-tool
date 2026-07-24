@@ -13,6 +13,16 @@ import urllib.request, urllib.parse, urllib.error
 
 GRAPH = "https://graph.facebook.com/v21.0"
 
+
+class GraphAPIError(RuntimeError):
+    """A non-2xx response from the Graph API, carrying the parsed error fields."""
+    def __init__(self, message, http_status=None, code=None, subcode=None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.code = code
+        self.subcode = subcode
+
+
 def api(path, params, method="POST"):
     if method == "GET":
         url = f"{GRAPH}/{path}?{urllib.parse.urlencode(params)}"
@@ -27,14 +37,18 @@ def api(path, params, method="POST"):
         # The Graph API returns a JSON body describing the error even on 4xx/5xx
         # responses. urllib raises before we can see it, so surface it here.
         body = e.read().decode("utf-8", "replace")
+        code = subcode = None
         try:
             err = json.loads(body).get("error", {})
-            detail = (f"code={err.get('code')} subcode={err.get('error_subcode')} "
+            code, subcode = err.get("code"), err.get("error_subcode")
+            detail = (f"code={code} subcode={subcode} "
                       f"type={err.get('type')} message={err.get('message')!r} "
                       f"fbtrace_id={err.get('fbtrace_id')}")
         except json.JSONDecodeError:
             detail = body
-        raise RuntimeError(f"Graph API {method} {path} -> HTTP {e.code}: {detail}") from None
+        raise GraphAPIError(f"Graph API {method} {path} -> HTTP {e.code}: {detail}",
+                            http_status=e.code, code=code, subcode=subcode) from None
+
 
 def wait_finished(cid, token, tries=30):
     """Poll a container until status_code == FINISHED. Return True on success."""
@@ -50,26 +64,77 @@ def wait_finished(cid, token, tries=30):
     print(f"  ⚠️  container {cid} not FINISHED after {tries} polls")
     return False
 
-def api_with_retry(path, params, method="POST", attempts=4):
-    """Call api() with exponential backoff for transient failures (e.g. the
-    eventual-consistency 403 the Graph API can return right after a container
-    reports FINISHED)."""
-    delay = 3
+
+def latest_media_id(ig_user, token):
+    """Return the id of the account's most recent media, or None if unreadable."""
+    try:
+        r = api(f"{ig_user}/media",
+                {"fields": "id", "limit": "1", "access_token": token}, "GET")
+        data = r.get("data", [])
+        return data[0]["id"] if data else None
+    except GraphAPIError as e:
+        print(f"  ⚠️  could not read latest media: {e}")
+        return None
+
+
+def publish_carousel(ig_user, creation_id, token, attempts=3):
+    """Publish the carousel container.
+
+    media_publish is NOT idempotent, and the Graph API can publish server-side
+    while still returning an error to the caller. So on any error we verify
+    whether the post actually went live (by watching the account's most-recent
+    media id) before deciding to retry — this prevents duplicate posts. We also
+    refuse to retry on rate-limit errors, which would only burn more quota.
+    """
+    before = latest_media_id(ig_user, token)
+    delay = 15
     for attempt in range(1, attempts + 1):
         try:
-            return api(path, params, method)
-        except RuntimeError as e:
+            result = api(f"{ig_user}/media_publish",
+                         {"creation_id": creation_id, "access_token": token})
+            return result["id"]
+        except GraphAPIError as e:
+            print(f"  ⚠️  media_publish failed (attempt {attempt}/{attempts}): {e}")
+
+            # Give Instagram a moment, then check whether it published anyway.
+            time.sleep(min(delay, 15))
+            after = latest_media_id(ig_user, token)
+            if before is not None and after is not None and after != before:
+                print(f"  ✅ media actually published despite the error: {after}")
+                return after
+
+            # If we couldn't establish a baseline, we can't safely retry without
+            # risking a duplicate. Bail out and let a human check the account.
+            if before is None:
+                sys.exit("❌ media_publish failed and the account's media list "
+                         "was unreadable, so publish success can't be verified. "
+                         "Not retrying to avoid a duplicate post — check the "
+                         "account manually.")
+
+            # Rate limited: retrying shortly will just fail again and consume
+            # more quota. The container stays valid; the next scheduled run can
+            # publish a fresh one. Abort cleanly.
+            if e.code == 4:
+                sys.exit(f"❌ Rate limited by the Graph API (code 4: application "
+                         f"request limit reached). Not retrying to avoid burning "
+                         f"more quota. creation_id={creation_id}")
+
             if attempt == attempts:
                 raise
-            print(f"  ⚠️  {path} failed (attempt {attempt}/{attempts}): {e}")
-            print(f"      retrying in {delay}s...")
-            time.sleep(delay)
             delay *= 2
+
 
 def main():
     ig_user = os.environ["IG_USER_ID"]
     token   = os.environ["IG_ACCESS_TOKEN"]
     base    = os.environ["IMAGE_BASE_URL"].rstrip("/")
+
+    # Cache-buster appended to every image URL. The slide files always live at
+    # the same paths (slide_1.jpg …), and Instagram caches images by URL — as
+    # does the raw.githubusercontent.com CDN — so without this the Graph API can
+    # ingest a *previous day's* cached bytes and post stale images. A unique
+    # per-run token forces a fresh fetch of the just-committed slides.
+    bust = os.environ.get("CACHE_BUST") or str(int(time.time()))
 
     outdir = os.path.join(os.path.dirname(__file__), "output")
     slides = sorted(glob.glob(os.path.join(outdir, "slide_*.jpg")),
@@ -77,14 +142,14 @@ def main():
     with open(os.path.join(outdir, "caption.txt"), encoding="utf-8") as f:
         caption = f.read()
 
-    print(f"Publishing carousel: {len(slides)} slides")
+    print(f"Publishing carousel: {len(slides)} slides (cache-bust v={bust})")
 
     # 1. Create item containers
     children = []
     for p in slides:
         fname = os.path.basename(p)
         c = api(f"{ig_user}/media", {
-            "image_url": f"{base}/{fname}",
+            "image_url": f"{base}/{fname}?v={bust}",
             "is_carousel_item": "true",
             "access_token": token,
         })
@@ -112,13 +177,10 @@ def main():
         sys.exit(f"❌ Carousel container {carousel['id']} never reached "
                  f"FINISHED — aborting before publish.")
 
-    # 5. Publish (with retry — media_publish can transiently 403 right after
-    #    the container reports FINISHED).
-    result = api_with_retry(f"{ig_user}/media_publish", {
-        "creation_id": carousel["id"],
-        "access_token": token,
-    })
-    print(f"🎉 Carousel published! Media ID: {result['id']}")
+    # 5. Publish (idempotency-safe — see publish_carousel).
+    media_id = publish_carousel(ig_user, carousel["id"], token)
+    print(f"🎉 Carousel published! Media ID: {media_id}")
+
 
 if __name__ == "__main__":
     main()
