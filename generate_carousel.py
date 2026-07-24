@@ -183,11 +183,13 @@ def generate(md=None):
     with open(os.path.join(os.path.dirname(__file__), "today_facts.json"), encoding="utf-8") as f:
         TF = json.load(f)
 
-    facts = TF.get(md, [])
-    if not facts:
-        keys = sorted(TF.keys())
-        md = min(keys, key=lambda k: abs(int(k[:2])*31+int(k[3:]) - (int(md[:2])*31+int(md[3:]))))
-        facts = TF[md]
+    # Facts for the exact date. A missing or thin date is filled by the
+    # padding block below, which borrows the same week's #1s. We keep `md`
+    # (today's real date) for all labelling — charts were weekly, so a #1 from
+    # a day or two away was still #1 on this date. Relabelling the post to the
+    # borrowed neighbour instead made a missing day (e.g. 07-24) publish as a
+    # verbatim duplicate of its neighbour ("July 23").
+    facts = list(TF.get(md, []))
 
     # Pad thin dates from neighboring days: charts were weekly, so a #1
     # from a day or two away was still #1 on this date. Mark those facts
@@ -205,6 +207,8 @@ def generate(md=None):
                 facts.append(f); used_years.add(f["year"])
 
     facts = sorted(facts, key=lambda f: -f["year"])[:5]   # up to 5, recent first
+    if not facts:
+        sys.exit(f"No chart data for {md} or the surrounding week — nothing to post.")
     try:
         md_label = datetime.strptime(md, "%m-%d").strftime("%B %-d")
     except ValueError:
